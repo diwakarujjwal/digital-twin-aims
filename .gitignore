@@ -1,0 +1,10 @@
+.venv/
+venv/
+.env
+__pycache__/
+*.py[cod]
+.DS_Store
+data/books_markdown/
+data/audio_transcript/
+data/raw_audio/
+tests/
