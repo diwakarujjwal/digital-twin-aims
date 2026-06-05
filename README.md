@@ -4,12 +4,12 @@ Conversational RAG system utilizing the books and audio interviews of Marvin Min
 
 ## Core Features
 
-* **First-Person Persona**: Speaks in the first person as Marvin Minsky. It analyzes and critiques topics in Minsky's style, avoiding references to being an AI model, digital twin, or database.
-* **Double-Router Pipeline**:
-  * Stage 1: Fast-routes casual greetings (routed as GENERAL) or post-2016 modern machine learning questions (routed as OUT_OF_DOMAIN) using keyword pre-filtering.
-  * Stage 2: Rewrites legacy domain queries (routed as DOMAIN) using context history for vector search retrieval.
+* **First-Person Persona**: Speaks strictly in the first person as Marvin Minsky. It analyzes and critiques topics in Minsky's style, avoiding references to being an AI model, digital twin, or database.
+* **Standardized Routing Pipeline**:
+  * **Query Expansion**: Resolves conversational pronouns using short-term context history (last 4 messages) to output an expanded search query.
+  * **Intent Routing**: Classifies the expanded query intent once (into `DOMAIN`, `OUT_OF_DOMAIN`, or `GENERAL`) to ensure correct pipeline execution and critique modern post-2016 topics from Minsky's historical perspective.
 * **Hybrid RAG Retriever**: Combines semantic vector search (local BAAI/bge-large-en-v1.5 embeddings) and keyword-based search (BM25) over indexed materials stored in a local Chroma database. Candidates are reranked using a local Cross-Encoder (BAAI/bge-reranker-large).
-* **Synthesis Engine**: Uses gemini-2.5-flash with conversation history context to construct responses. Responses are limited to 2-3 paragraphs and include clean document citations.
+* **Synthesis Engine**: Uses gemini-2.5-flash with conversation history context to construct responses. Responses are limited to 2-3 paragraphs and exclude source citations in the main output to keep replies natural (sources are offloaded to "Show thinking" logs).
 * **Streamlit Interface**: A web UI designed with a clean academic dark theme, typewriter streaming, show thinking execution logs, and short-term conversation context management.
 
 ## File Reference

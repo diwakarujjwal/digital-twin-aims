@@ -348,7 +348,7 @@ def generate_synthesis(
         sys_prompt = BASE_PERSONA
         prompt = f"System Prompt:\n{sys_prompt}\n\n{history_text}User Query:\n{query}"
 
-    response = client.models.generate_content(model="gemma-4-26b-a4b-it", contents=prompt)
+    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
     return response.text
 
 
