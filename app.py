@@ -1,12 +1,10 @@
-import streamlit as st
-import mlx.core as mx
-import time
+import warnings
+warnings.filterwarnings("ignore")
+import logging
+logging.getLogger("transformers").setLevel(logging.ERROR)
 
-# 0. Initialize thread-local Metal streams for MLX to prevent stream errors in threads
-try:
-    mx.default_stream(mx.gpu)
-except RuntimeError:
-    mx.set_default_stream(mx.new_thread_local_stream(mx.gpu))
+import streamlit as st
+import time
 
 from main_model import HybridRetriever, expand_query, route_intent, generate_synthesis
 

@@ -6,11 +6,9 @@ langchain
 langchain-experimental
 langchain-huggingface
 sentence-transformers
-mlx-lm
 rich
 rank_bm25
 google-genai
 python-dotenv
 streamlit
-mlx<0.31.2
-mlx-metal<0.31.2
+accelerate

@@ -3,8 +3,14 @@ import re
 import sys
 import subprocess
 from pathlib import Path
+import torch
 
-os.environ["TORCH_DEVICE"] = "mps"
+if torch.cuda.is_available():
+    os.environ["TORCH_DEVICE"] = "cuda"
+elif torch.backends.mps.is_available():
+    os.environ["TORCH_DEVICE"] = "mps"
+else:
+    os.environ["TORCH_DEVICE"] = "cpu"
 
 BOOK_PAGES = {
     "society_of_mind.pdf": "3-455",

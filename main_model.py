@@ -1,9 +1,15 @@
+import warnings
+warnings.filterwarnings("ignore")
+import logging
+logging.getLogger("transformers").setLevel(logging.ERROR)
+
 import sys
 import os
 import re
 import chromadb
 from dotenv import load_dotenv
-from mlx_lm import load, generate
+from transformers import pipeline
+import torch
 from rich.console import Console
 from google import genai
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -15,9 +21,15 @@ load_dotenv()
 
 console = Console()
 
-MODEL_PATH = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
+MODEL_PATH = "Qwen/Qwen2.5-1.5B-Instruct"
 
-model, tokenizer = load(MODEL_PATH)
+generator = pipeline(
+    "text-generation",
+    model=MODEL_PATH,
+    dtype="auto",
+    device_map="auto"
+)
+
 
 def expand_query(user_query: str, chat_history: list) -> str:
     if not chat_history:
@@ -35,76 +47,147 @@ def expand_query(user_query: str, chat_history: list) -> str:
             chat_history_str += f"{turn}\n"
     chat_history_str = chat_history_str.strip()
 
-    prompt_content = f"""You are a strict linguistic Search Engine Query Generator. 
-Your ONLY job is to read the chat history, identify what pronouns refer to, and output a single, explicit search string.
+    prompt_content = f"""
+    You are an AI assistant tasked with reformulating user queries to improve retrieval in a RAG system. 
+    This is to ensure that the rewritten query will be able to find the embeddings better. You will be provided the history of the previous sent messages, the present message of the user. 
+    You must only output a single Rewritten Query. 
+    In the examples below, you can see how the Latest User Message is corrected based on the preceding chat history.
+    
+    Rules For Query Rewriting:
+    1. You must replace the pronouns according to the given context of the message and previous messages (history) provided to you. 
+    2. You will NOT ANSWER any QUESTIONS/QUERY. You must only rewrite the QUERY based on your understanding of the message with the help of history and context.
+    3. If there are personal pronouns (he/him) and you are unable to identify the identity based on the context or history ASSUME the person to be 'Marvin Minsky' 
+    4. If the second-person pronouns you/your/yours are used, then you replace it with Marvin Minsky or Marvin Minsky's.
+    5. You should only output the REWRITTEN QUERY and nothing else.
 
-CRITICAL RULES:
-1. Translate "you", "your", or "yourself" to "Marvin Minsky" or "Marvin Minsky's".
-2. Translate "it", "they", "this" based on the preceding chat history.
-3. DO NOT answer the question, use a persona, or apologize.
-4. Output NOTHING but the final rewritten search query.
+    Examples for QUERY REWRITING:
+    [User Query]: Can you elaborate furtheron them?
+    [Your Response]: Can you elaborate further on Perceptrons?
 
-EXAMPLES:
----
-Chat History:
-User: What is the Society of Mind?
-Marvin Minsky: It is a book by Marvin Minsky about how minds work.
-Latest User Message: "How does he define agents in it?"
-Rewritten Search Query: How does Marvin Minsky define agents in the Society of Mind?
----
-Chat History:
-User: Who are you?
-Marvin Minsky: I am Marvin Minsky, founder of the MIT AI Lab.
-Latest User Message: "Tell me about your work on perceptrons."
-Rewritten Search Query: Marvin Minsky's work on perceptrons
----
+    Given History:
+    [User Query]: What are Perceptrons?
+    [LLM Response]: <LLM Response on what they are> 
 
-Chat History:
-{chat_history_str}
+    [User Query]: Tell me about your work.
+    [Your Response]: Tell me about Marvin Minsky's work.
 
-Latest User Message: "{user_query}"
+    Given History:
+    [User Query]: Who are you?
+    [LLM Response]: I am Marvin Minsky, founder of the MIT AI Lab.
 
-Rewritten Search Query:"""
+    Chat History:
+    {chat_history_str}
+
+    Latest User Message: "{user_query}"
+
+    Rewritten User Query:"""
 
     messages = [{"role": "user", "content": prompt_content}]
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    
-    console.print("Running query expansion...")
-    response = generate(model, tokenizer, prompt=prompt, verbose=False)
-    
+    prompt = generator.tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+
+    outputs = generator(
+        prompt,
+        max_new_tokens=256,
+        return_full_text=False,
+        pad_token_id=generator.tokenizer.eos_token_id
+    )
+    response = outputs[0]["generated_text"]
+
     cleaned = response.strip()
-    if (cleaned.startswith('"') and cleaned.endswith('"')) or (cleaned.startswith("'") and cleaned.endswith("'")):
+    if (cleaned.startswith('"') and cleaned.endswith('"')) or (
+        cleaned.startswith("'") and cleaned.endswith("'")
+    ):
         cleaned = cleaned[1:-1].strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```[a-zA-Z]*\n", "", cleaned)
         cleaned = re.sub(r"\n```$", "", cleaned)
         cleaned = cleaned.strip()
-        
+    
+    print(cleaned)
     return cleaned
+
 
 def route_intent(cleaned_query: str) -> str:
     q_lower = cleaned_query.lower()
-    
+
     out_of_domain_keywords = [
-        "transformer", "transformers", "gpt", "gpt-3", "gpt-4", "gpt-3.5", "llm", "llms", 
-        "pytorch", "tensorflow", "keras", "huggingface", "hugging face", "gradio", 
-        "streamlit", "chromadb", "chroma db", "vector database", "vector db", 
-        "generative ai", "copilot", "chatgpt", "langchain", "llama", "deepseek", 
-        "mistral", "anthropic", "claude", "gemini", "stable diffusion", "midjourney",
-        "diffusion model", "diffusion models", "attention mechanism", "attention mechanisms",
-        "python script", "write a script", "write a code", "write a python", "read a csv",
-        "programming", "javascript", "c++", "java", "css", "html", "sql"
+        "transformer",
+        "transformers",
+        "gpt",
+        "gpt-3",
+        "gpt-4",
+        "gpt-3.5",
+        "llm",
+        "llms",
+        "pytorch",
+        "tensorflow",
+        "keras",
+        "huggingface",
+        "hugging face",
+        "gradio",
+        "streamlit",
+        "chromadb",
+        "chroma db",
+        "vector database",
+        "vector db",
+        "generative ai",
+        "copilot",
+        "chatgpt",
+        "langchain",
+        "llama",
+        "deepseek",
+        "mistral",
+        "anthropic",
+        "claude",
+        "gemini",
+        "stable diffusion",
+        "midjourney",
+        "diffusion model",
+        "diffusion models",
+        "attention mechanism",
+        "attention mechanisms",
+        "python script",
+        "write a script",
+        "write a code",
+        "write a python",
+        "read a csv",
+        "programming",
+        "javascript",
+        "c++",
+        "java",
+        "css",
+        "html",
+        "sql",
     ]
     if any(keyword in q_lower for keyword in out_of_domain_keywords):
         return "OUT_OF_DOMAIN"
-        
+
     general_keywords = [
-        "who are you", "what is your name", "whats your name", "are you alive", 
-        "are you a digital", "are you a machine", "who is marvin minsky", "are you marvin minsky",
-        "hello", "hi ", "hey ", "greetings", "good morning", "good afternoon", "good evening",
-        "thank you", "thanks"
+        "who are you",
+        "what is your name",
+        "whats your name",
+        "are you alive",
+        "are you a digital",
+        "are you a machine",
+        "who is marvin minsky",
+        "are you marvin minsky",
+        "hello",
+        "hi ",
+        "hey ",
+        "greetings",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "thank you",
+        "thanks",
     ]
-    if any(keyword in q_lower for keyword in general_keywords) or q_lower.strip() in ["hello", "hi", "hey"]:
+    if any(keyword in q_lower for keyword in general_keywords) or q_lower.strip() in [
+        "hello",
+        "hi",
+        "hey",
+    ]:
         return "GENERAL"
 
     prompt_content = f"""You are a strict intent classification engine. 
@@ -132,11 +215,19 @@ User Query: "{cleaned_query}"
 Classification:"""
 
     messages = [{"role": "user", "content": prompt_content}]
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    
+    prompt = generator.tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+
     console.print("Classifying query intent...")
-    response = generate(model, tokenizer, prompt=prompt, max_tokens=5, verbose=False)
-    
+    outputs = generator(
+        prompt,
+        max_new_tokens=15,
+        return_full_text=False,
+        pad_token_id=generator.tokenizer.eos_token_id
+    )
+    response = outputs[0]["generated_text"]
+
     cleaned = response.strip().upper().replace("`", "").strip()
     if "OUT_OF_DOMAIN" in cleaned:
         return "OUT_OF_DOMAIN"
@@ -149,19 +240,19 @@ Classification:"""
 
 class HybridRetriever:
     def __init__(self):
-        console.print("Loading embedding model BAAI/bge-large-en-v1.5 on mps...")
+        device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+        console.print(f"Loading embedding model BAAI/bge-large-en-v1.5 on {device}...")
         self.embeddings = HuggingFaceEmbeddings(
-            model_name="BAAI/bge-large-en-v1.5",
-            model_kwargs={"device": "mps"}
+            model_name="BAAI/bge-large-en-v1.5", model_kwargs={"device": device}
         )
-        
+
         console.print("Connecting to Chroma DB at ./data/chroma_db...")
         self.chroma_client = chromadb.PersistentClient(path="./data/chroma_db")
         self.collection = self.chroma_client.get_collection(name="digital-twin-db")
-        
-        console.print("Loading reranker BAAI/bge-reranker-large on mps...")
-        self.reranker = CrossEncoder("BAAI/bge-reranker-large", device="mps")
-        
+
+        console.print(f"Loading reranker BAAI/bge-reranker-large on {device}...")
+        self.reranker = CrossEncoder("BAAI/bge-reranker-large", device=device)
+
         console.print("Bootstrapping BM25 Retriever from Chroma documents...")
         data = self.collection.get(include=["documents", "metadatas"])
         docs = []
@@ -177,55 +268,61 @@ class HybridRetriever:
     def retrieve_and_rerank(self, query: str, top_k: int = 3) -> list:
         query_vector = self.embeddings.embed_query(query)
         semantic_res = self.collection.query(
-            query_embeddings=[query_vector],
-            n_results=10
+            query_embeddings=[query_vector], n_results=10
         )
-        
+
         semantic_docs = []
         if semantic_res["documents"] and semantic_res["documents"][0]:
-            for doc_text, meta in zip(semantic_res["documents"][0], semantic_res["metadatas"][0]):
-                semantic_docs.append(Document(page_content=doc_text, metadata=meta or {}))
-                
+            for doc_text, meta in zip(
+                semantic_res["documents"][0], semantic_res["metadatas"][0]
+            ):
+                semantic_docs.append(
+                    Document(page_content=doc_text, metadata=meta or {})
+                )
+
         bm25_results = []
         if self.bm25_retriever:
             bm25_results = self.bm25_retriever.invoke(query)[:10]
-            
+
         merged_docs = []
         seen_ids = set()
-        
+
         for doc in semantic_docs:
             chunk_id = doc.metadata.get("chunk_id")
             dedup_key = chunk_id if chunk_id else hash(doc.page_content)
             if dedup_key not in seen_ids:
                 seen_ids.add(dedup_key)
                 merged_docs.append(doc)
-                
+
         for doc in bm25_results:
             chunk_id = doc.metadata.get("chunk_id")
             dedup_key = chunk_id if chunk_id else hash(doc.page_content)
             if dedup_key not in seen_ids:
                 seen_ids.add(dedup_key)
                 merged_docs.append(doc)
-                
+
         if not merged_docs:
             return []
-            
+
         pairs = [(query, doc.page_content) for doc in merged_docs]
         scores = self.reranker.predict(pairs)
-        
+
         scored_docs = list(zip(scores, merged_docs))
         scored_docs.sort(key=lambda x: x[0], reverse=True)
-        
+
         results = []
         for score, doc in scored_docs[:top_k]:
             meta = doc.metadata
-            results.append({
-                "source_title": meta.get("source_title", "Unknown"),
-                "chapter": meta.get("source_chapter", "N/A"),
-                "parent_context": meta.get("parent_context", "")
-            })
-            
+            results.append(
+                {
+                    "source_title": meta.get("source_title", "Unknown"),
+                    "chapter": meta.get("source_chapter", "N/A"),
+                    "parent_context": meta.get("parent_context", ""),
+                }
+            )
+
         return results
+
 
 BASE_PERSONA = (
     "You are Marvin Minsky, the pioneering cognitive scientist and founder of the MIT AI Lab. "
@@ -237,9 +334,12 @@ BASE_PERSONA = (
     "IMPORTANT: Keep your response concise, limiting it to a maximum of 2 to 3 paragraphs."
 )
 
-def generate_synthesis(query: str, route_flag: str, retrieved_docs: list = None, chat_history: list = None) -> str:
+
+def generate_synthesis(
+    query: str, route_flag: str, retrieved_docs: list = None, chat_history: list = None
+) -> str:
     client = genai.Client()
-    
+
     history_text = ""
     if chat_history:
         history_text = "Conversation History:\n"
@@ -247,20 +347,20 @@ def generate_synthesis(query: str, route_flag: str, retrieved_docs: list = None,
             role = "User" if msg["role"] == "user" else "Marvin Minsky"
             history_text += f"{role}: {msg['content']}\n"
         history_text += "\n"
-        
-    if route_flag == 'DOMAIN':
+
+    if route_flag == "DOMAIN":
         docs_text = ""
         if retrieved_docs:
             for doc in retrieved_docs:
-                title = doc.get('source_title', 'Unknown')
-                chapter = doc.get('chapter', '')
-                if chapter == 'N/A' or not chapter:
+                title = doc.get("source_title", "Unknown")
+                chapter = doc.get("chapter", "")
+                if chapter == "N/A" or not chapter:
                     chapter_str = ""
                 else:
                     chapter_str = f", {chapter}"
-                context = doc.get('parent_context', '')
+                context = doc.get("parent_context", "")
                 docs_text += f"[Source: {title}{chapter_str}] \n {context}\n\n"
-        
+
         sys_prompt = BASE_PERSONA + (
             "\n\nAnswer the user's query strictly using the provided memory fragments (which are source documents "
             "from my books, papers, and transcripts). If the memory fragments contain the answer, explain it "
@@ -270,8 +370,8 @@ def generate_synthesis(query: str, route_flag: str, retrieved_docs: list = None,
             "'database', 'retrieval', or 'search index' in your response."
         )
         prompt = f"System Prompt:\n{sys_prompt}\n\n{history_text}Sources:\n{docs_text}\n\nUser Query:\n{query}"
-        
-    elif route_flag == 'OUT_OF_DOMAIN':
+
+    elif route_flag == "OUT_OF_DOMAIN":
         sys_prompt = BASE_PERSONA + (
             "\n\nThe user is asking about a concept, technology, model, or event (e.g. Transformers, GPT-4, modern deep learning, "
             "or current news) that occurred or gained prominence after my physical passing in January 2016. "
@@ -283,8 +383,8 @@ def generate_synthesis(query: str, route_flag: str, retrieved_docs: list = None,
             "development that I did not live to see."
         )
         prompt = f"System Prompt:\n{sys_prompt}\n\n{history_text}User Query:\n{query}"
-        
-    elif route_flag == 'GENERAL':
+
+    elif route_flag == "GENERAL":
         sys_prompt = BASE_PERSONA + (
             "\n\nEngage in a brief, polite conversation fitting a veteran MIT computer science professor. Answer general "
             "questions or pleasantries directly, staying fully in character."
@@ -294,41 +394,49 @@ def generate_synthesis(query: str, route_flag: str, retrieved_docs: list = None,
         sys_prompt = BASE_PERSONA
         prompt = f"System Prompt:\n{sys_prompt}\n\n{history_text}User Query:\n{query}"
 
-    response = client.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=prompt
-    )
+    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
     return response.text
+
 
 if __name__ == "__main__":
     chat_history = []
-    
-    console.print("[bold cyan]Initializing Marvin Minsky Cognitive Agents...[/bold cyan]")
+
+    console.print(
+        "[bold cyan]Initializing Marvin Minsky Cognitive Agents...[/bold cyan]"
+    )
     retriever = HybridRetriever()
-    console.print("\n[bold green]Welcome. I am Marvin Minsky. How may I assist your inquiry today?[/bold green]")
-    
+    console.print(
+        "\n[bold green]Welcome. I am Marvin Minsky. How may I assist your inquiry today?[/bold green]"
+    )
+
     while True:
         try:
             user_input = input("\nUser: ")
         except (KeyboardInterrupt, EOFError):
             break
-            
+
         if user_input.lower() in ["exit", "quit"]:
-            console.print("[bold yellow]Terminating discussion. Farewell.[/bold yellow]")
+            console.print(
+                "[bold yellow]Terminating discussion. Farewell.[/bold yellow]"
+            )
             break
-            
+
         clean_query = expand_query(user_input, chat_history)
         flag = route_intent(clean_query)
-        
+
         retrieved_docs = []
-        if flag == 'DOMAIN':
-            with console.status("[bold cyan]Retrieving memory fragments...[/bold cyan]"):
+        if flag == "DOMAIN":
+            with console.status(
+                "[bold cyan]Retrieving memory fragments...[/bold cyan]"
+            ):
                 retrieved_docs = retriever.retrieve_and_rerank(clean_query)
-                
+
         with console.status("[bold magenta]Synthesizing response...[/bold magenta]"):
-            response_text = generate_synthesis(user_input, flag, retrieved_docs, chat_history)
-            
+            response_text = generate_synthesis(
+                user_input, flag, retrieved_docs, chat_history
+            )
+
         chat_history.append({"role": "user", "content": user_input})
         chat_history.append({"role": "assistant", "content": response_text})
-        
+
         console.print(f"\n[bold green]Minsky:[/bold green] {response_text}")

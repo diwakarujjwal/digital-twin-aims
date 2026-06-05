@@ -9,8 +9,8 @@ from tqdm import tqdm
 
 MODEL_NAME = "small"
 
-INPUT_DIR = Path("./data/raw_audio")
-OUTPUT_DIR = Path("./data/audio_transcript")
+INPUT_DIR = Path("./something")
+OUTPUT_DIR = Path("./something")
 
 def extract_clean_title(filename: str) -> tuple[str, str]:
     stem = Path(filename).stem
@@ -47,12 +47,15 @@ def main():
         print(f"Creating output directory: {OUTPUT_DIR}")
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         
-    if torch.backends.mps.is_available():
+    if torch.cuda.is_available():
+        device = "cuda"
+        print("CUDA GPU acceleration detected! Routing Whisper to GPU.")
+    elif torch.backends.mps.is_available():
         device = "mps"
         print("Apple Silicon GPU acceleration (MPS) detected! Routing Whisper to GPU.")
     else:
         device = "cpu"
-        print("MPS not available. Routing Whisper to CPU.")
+        print("GPU acceleration not available. Routing Whisper to CPU.")
         
     print(f"Loading Whisper model '{MODEL_NAME}' on device '{device}'...")
     model = whisper.load_model(MODEL_NAME, device=device)
