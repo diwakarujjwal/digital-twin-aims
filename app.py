@@ -110,6 +110,7 @@ def get_condensed_history(history: list) -> list:
     return condensed
 
 
+
 @st.cache_resource(show_spinner=False)
 def load_retrieval_engine():
     return HybridRetriever()
@@ -145,6 +146,7 @@ for message in st.session_state.chat_history:
             with st.expander("Show thinking", expanded=False):
                 for log in message["thinking_logs"]:
                     st.markdown(log)
+        
         st.markdown(message["content"])
 
 def stream_text(text: str):
@@ -162,87 +164,67 @@ if user_input := st.chat_input("Talk to Marvin Minsky..."):
     with st.chat_message("assistant", avatar="🧠"):
         thinking_logs = []
         
-        with st.status("Engaging Cognitive Agencies...", expanded=True) as status:
-            log_1 = "**Determining domain alignment in the Society of Mind...**"
+        with st.status("Processing Query...", expanded=True) as status:
+            log_1 = "**Analyzing conversation history and context...**"
             st.write(log_1)
             thinking_logs.append(log_1)
             
-            raw_flag = route_intent(user_input)
+            clean_query = expand_query(user_input, history_before_append)
             
-            if raw_flag in ['OUT_OF_DOMAIN', 'GENERAL']:
-                flag = raw_flag
-                clean_query = user_input
-                if flag == 'GENERAL':
-                    log_2 = "→ *Routing inquiry to conversational pleasantry agency.*"
-                else:
-                    log_2 = "→ *Identified concept as outside legacy knowledge horizon.*"
-                st.write(log_2)
-                thinking_logs.append(log_2)
-                
-                retrieved_docs = []
-            else:
-                # STAGE 2: Post-Rewrite Router
-                log_2 = "**Reconstructing context from short-term memory traces...**"
-                st.write(log_2)
-                thinking_logs.append(log_2)
-                
-                clean_query = expand_query(user_input, history_before_append)
-                
-                log_3 = f"→ *Formulated thought context:* `{clean_query}`"
-                st.write(log_3)
-                thinking_logs.append(log_3)
-                
-                log_4 = "**Confirming domain alignment on context-expanded query...**"
+            log_2 = f"→ *Rewritten search query:* `{clean_query}`"
+            st.write(log_2)
+            thinking_logs.append(log_2)
+            
+            log_3 = "**Classifying query intent...**"
+            st.write(log_3)
+            thinking_logs.append(log_3)
+            
+            flag = route_intent(clean_query)
+            
+            retrieved_docs = []
+            if flag == 'DOMAIN':
+                log_4 = "→ *Query is within Marvin Minsky's research domain.*"
                 st.write(log_4)
                 thinking_logs.append(log_4)
                 
-                flag = route_intent(clean_query)
-                if flag == 'DOMAIN':
-                    log_5 = "→ *Inquiry aligned with legacy theoretical paradigms.*"
-                    st.write(log_5)
-                    thinking_logs.append(log_5)
-                    
-                    log_6 = "**Arousing associated K-lines to recall past states...**"
+                log_5 = "**Searching database for relevant books and documents...**"
+                st.write(log_5)
+                thinking_logs.append(log_5)
+                
+                retrieved_docs = retriever.retrieve_and_rerank(clean_query)
+                if retrieved_docs:
+                    log_6 = "**Found relevant reference texts:**"
                     st.write(log_6)
                     thinking_logs.append(log_6)
-                    
-                    retrieved_docs = retriever.retrieve_and_rerank(clean_query)
-                    if retrieved_docs:
-                        log_7 = "**Recalled Memory Contexts:**"
-                        st.write(log_7)
-                        thinking_logs.append(log_7)
-                        for doc in retrieved_docs:
-                            title = doc.get('source_title', 'Unknown')
-                            chapter = doc.get('chapter', '')
-                            # Filter out N/A in status logs
-                            if chapter == 'N/A' or not chapter:
-                                log_doc = f"- *{title}*"
-                            else:
-                                log_doc = f"- *{title}* — Chapter: *{chapter}*"
-                            st.write(log_doc)
-                            thinking_logs.append(log_doc)
-                    else:
-                        log_7 = "*No memory segments recovered for the current active agents.*"
-                        st.write(log_7)
-                        thinking_logs.append(log_7)
-                elif flag == 'OUT_OF_DOMAIN':
-                    log_5 = "→ *Identified concept as outside legacy knowledge horizon.*"
-                    st.write(log_5)
-                    thinking_logs.append(log_5)
-                    retrieved_docs = []
+                    for doc in retrieved_docs:
+                        title = doc.get('source_title', 'Unknown')
+                        chapter = doc.get('chapter', '')
+                        if chapter == 'N/A' or not chapter:
+                            log_doc = f"- *{title}*"
+                        else:
+                            log_doc = f"- *{title}* — Chapter: *{chapter}*"
+                        st.write(log_doc)
+                        thinking_logs.append(log_doc)
                 else:
-                    log_5 = "→ *Routing inquiry to conversational pleasantry agency.*"
-                    st.write(log_5)
-                    thinking_logs.append(log_5)
-                    retrieved_docs = []
+                    log_6 = "*No relevant reference documents found.*"
+                    st.write(log_6)
+                    thinking_logs.append(log_6)
+            elif flag == 'OUT_OF_DOMAIN':
+                log_4 = "→ *Query is about out-of-domain topics/database information.*"
+                st.write(log_4)
+                thinking_logs.append(log_4)
+            else:
+                log_4 = "→ *Query is a greeting or general pleasantry.*"
+                st.write(log_4)
+                thinking_logs.append(log_4)
             
-            log_synthesis = "**Reflecting on memory synthesis...**"
+            log_synthesis = "**Generating response...**"
             st.write(log_synthesis)
             thinking_logs.append(log_synthesis)
             
             response_text = generate_synthesis(user_input, flag, retrieved_docs, history_before_append)
             
-            status.update(label="Cognitive Agencies Synthesis Complete", state="complete", expanded=False)
+            status.update(label="Response Synthesis Complete", state="complete", expanded=False)
             
         st.write_stream(stream_text(response_text))
         

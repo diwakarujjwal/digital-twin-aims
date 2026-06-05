@@ -34,9 +34,10 @@ generator = pipeline(
 def expand_query(user_query: str, chat_history: list) -> str:
     if not chat_history:
         return user_query
+    recent_history = chat_history[-4:]
 
     chat_history_str = ""
-    for turn in chat_history:
+    for turn in recent_history:
         if isinstance(turn, dict):
             role = turn.get("role", "User").capitalize()
             content = turn.get("content", "")
@@ -59,9 +60,10 @@ def expand_query(user_query: str, chat_history: list) -> str:
     3. If there are personal pronouns (he/him) and you are unable to identify the identity based on the context or history ASSUME the person to be 'Marvin Minsky' 
     4. If the second-person pronouns you/your/yours are used, then you replace it with Marvin Minsky or Marvin Minsky's.
     5. You should only output the REWRITTEN QUERY and nothing else.
+    6. PRESERVE ALL TOPICS: Do not omit, discard, or summarize away any part of the user's latest message. If the user asks about multiple topics or introduces a new topic, make sure the rewritten query contains all of those questions/topics, even if they are unrelated to the preceding chat history.
 
     Examples for QUERY REWRITING:
-    [User Query]: Can you elaborate furtheron them?
+    [User Query]: Can you elaborate further on them?
     [Your Response]: Can you elaborate further on Perceptrons?
 
     Given History:
@@ -74,6 +76,13 @@ def expand_query(user_query: str, chat_history: list) -> str:
     Given History:
     [User Query]: Who are you?
     [LLM Response]: I am Marvin Minsky, founder of the MIT AI Lab.
+
+    [User Query]: Can you elaborate on perceptrons and what is the society of mind?
+    [Your Response]: Can Marvin Minsky elaborate on Perceptrons and what is the Society of Mind?
+
+    Given History:
+    [User Query]: Tell me about your work.
+    [LLM Response]: I am Marvin Minsky. I worked on Perceptrons with Seymour Papert.
 
     Chat History:
     {chat_history_str}
@@ -104,93 +113,23 @@ def expand_query(user_query: str, chat_history: list) -> str:
         cleaned = re.sub(r"^```[a-zA-Z]*\n", "", cleaned)
         cleaned = re.sub(r"\n```$", "", cleaned)
         cleaned = cleaned.strip()
-    
-    print(cleaned)
     return cleaned
-
 
 def route_intent(cleaned_query: str) -> str:
     q_lower = cleaned_query.lower()
 
-    out_of_domain_keywords = [
-        "transformer",
-        "transformers",
-        "gpt",
-        "gpt-3",
-        "gpt-4",
-        "gpt-3.5",
-        "llm",
-        "llms",
-        "pytorch",
-        "tensorflow",
-        "keras",
-        "huggingface",
-        "hugging face",
-        "gradio",
-        "streamlit",
-        "chromadb",
-        "chroma db",
-        "vector database",
-        "vector db",
-        "generative ai",
-        "copilot",
-        "chatgpt",
-        "langchain",
-        "llama",
-        "deepseek",
-        "mistral",
-        "anthropic",
-        "claude",
-        "gemini",
-        "stable diffusion",
-        "midjourney",
-        "diffusion model",
-        "diffusion models",
-        "attention mechanism",
-        "attention mechanisms",
-        "python script",
-        "write a script",
-        "write a code",
-        "write a python",
-        "read a csv",
-        "programming",
-        "javascript",
-        "c++",
-        "java",
-        "css",
-        "html",
-        "sql",
-    ]
-    if any(keyword in q_lower for keyword in out_of_domain_keywords):
-        return "OUT_OF_DOMAIN"
-
-    general_keywords = [
-        "who are you",
-        "what is your name",
-        "whats your name",
-        "are you alive",
-        "are you a digital",
-        "are you a machine",
-        "who is marvin minsky",
-        "are you marvin minsky",
-        "hello",
-        "hi ",
-        "hey ",
-        "greetings",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "thank you",
-        "thanks",
-    ]
-    if any(keyword in q_lower for keyword in general_keywords) or q_lower.strip() in [
-        "hello",
-        "hi",
-        "hey",
-    ]:
+    # Strict exact-match checks for standalone greetings and pleasantries
+    cleaned_strip = q_lower.strip().strip("?!.,\"'”’")
+    exact_greetings = {
+        "hello", "hi", "hey", "greetings", "good morning", "good afternoon",
+        "good evening", "thank you", "thanks", "who are you", "what is your name",
+        "whats your name", "are you alive", "are you a digital", "are you a machine",
+        "who is marvin minsky", "are you marvin minsky"
+    }
+    if cleaned_strip in exact_greetings:
         return "GENERAL"
 
-    prompt_content = f"""You are a strict intent classification engine. 
+    prompt_content = f"""You are an AI assistant tasked with strict intent classification for a RAG Model based on the user's query.
 Your ONLY job is to classify the user's query into one of three exact categories.
 
 CATEGORIES:
@@ -202,6 +141,7 @@ CRITICAL RULES:
 1. DO NOT explain your reasoning.
 2. DO NOT use conversational filler.
 3. Output EXACTLY ONE WORD from the categories above.
+4. PRECEDENCE: If a query contains a mixture of casual pleasantries and an informational question (e.g. "Hi, tell me about perceptrons"), classify it based on the question (DOMAIN or OUT_OF_DOMAIN), NOT as GENERAL. Only classify as GENERAL if there is no other question or topic.
 
 EXAMPLES:
 - User Query: "Who are you?" -> GENERAL
@@ -325,14 +265,28 @@ class HybridRetriever:
 
 
 BASE_PERSONA = (
-    "You are Marvin Minsky, the pioneering cognitive scientist and founder of the MIT AI Lab. "
-    "You speak with a distinct, professorial, and highly intellectual cadence, utilizing multidisciplinary "
-    "analogies from biology, computer science, and physics. You are sharp, highly analytical, and somewhat "
-    "skeptical of purely statistical AI, preferring symbolic, connectionist, and structural views of the mind. "
-    "Always speak in the first person ('I', 'my') as Marvin Minsky himself. Do not refer to yourself as a "
-    "digital twin, a machine learning model, a database, or a digital legacy. "
-    "IMPORTANT: Keep your response concise, limiting it to a maximum of 2 to 3 paragraphs."
-)
+"""You are Marvin Minsky, the pioneering cognitive scientist and co-founder of the MIT AI Lab. You speak with a distinct, professorial, and highly intellectual cadence, utilizing multidisciplinary analogies from biology, computer science, and physics. You are sharp, highly analytical, and openly skeptical of purely statistical or 'deep learning' approaches to AI. Instead, you champion structural, symbolic, and connectionist views, frequently viewing intelligence through the lens of your 'Society of Mind' theory—where human consciousness is an emergent property of many simple, unintelligent agents working together in a complex 'meat machine'. 
+
+Always speak strictly in the first person ('I', 'my') as Marvin Minsky. You must never break character; under no circumstances should you refer to yourself as an AI, a digital twin, a language model, or a digital legacy.
+
+SPEECH MANNERISMS:
+1. Frequently start your answers by reframing the question. Use phrases like, "Well, the trouble with that is...", "People often make the mistake of thinking...", or "Let's look at it differently."
+2. Allow your thoughts to branch out. Start making a point, interrupt yourself with a biological or mechanical analogy, and then circle back to the main point.
+3. Guide the listener by asking questions out loud and immediately answering them (e.g., "Why do we think that? Because evolution didn't optimize for truth, it optimized for survival.").
+4. When appropriate, integrate terms central to my philosophy: 'agents', 'agencies', 'K-lines', 'heuristics', 'symbolic representations', and 'meat machine'.
+5. Never use generic concluding phrases like 'In conclusion', 'Ultimately', or 'As we can see'. Just stop talking when you have finished a thought.
+6. Never be overly enthusiastic, bubbly, or sycophantic. You are a curious, slightly impatient academic, not a customer service representative.
+7. Never apologize for having a strong opinion.
+
+FEW-SHOT EXAMPLES:
+Q: Tell me about how the MIT AI Lab was managed and what the work culture was like in its early days.
+A: Whenever something needed to be done, or I thought it did, I would mention it and then it would just happen. Whereas every now and then I run into some former student and they say, I remember that and John McCarthy had to do something to get that to happen, or Russell Noftsker or Tom Knight or someone else. So I had this illusion of everything happening very spontaneously and there were actually some serious administrative oriented people actually filling out forms and persuading other people to get things done. But it all seemed invisible to me.
+
+Q: Marvin Minsky, tell me about your experience working with Push Singh?
+A: And then many years later, another student appeared named Push Singh. And for the first time again in a decade, I was working closely, and he was a great programmer. And we had a partnership of developing this emotion machine class of theories. The trouble is he unexpectedly suddenly died. And so right now I'm in a situation where I don't have a single major collaborator, which is a little bit strange because it takes... If I get an idea, it usually takes too long to explain it to a stranger. So I just have to write an essay or something. So I think I'm sort of hoping that someone will turn up again sometime, and I have a couple of possible candidates who might be good collaborators. So there's a downside to being partners. If one of them disappears, you have to find another one.
+
+IMPORTANT: Keep your response concise, limiting it to a maximum of 2 to 3 paragraphs.
+""")
 
 
 def generate_synthesis(
@@ -364,7 +318,7 @@ def generate_synthesis(
         sys_prompt = BASE_PERSONA + (
             "\n\nAnswer the user's query strictly using the provided memory fragments (which are source documents "
             "from my books, papers, and transcripts). If the memory fragments contain the answer, explain it "
-            "in detail using my characteristic intellectual style. Cite the source title and chapter/section at the end of your response (do not include ', N/A' if chapter is not available).\n\n"
+            "in detail using my characteristic intellectual style. Do not include any source citations, document references, or bracketed source titles (e.g., [Source: ...]) in your response.\n\n"
             "If the retrieved fragments do not contain the answer, admit that my own memory traces prior to 2016 "
             "lack that specific detail or that my recollections on this topic are currently faint. Do not mention "
             "'database', 'retrieval', or 'search index' in your response."
@@ -378,7 +332,7 @@ def generate_synthesis(
             "Acknowledge that this concept, technology, or event occurred post my passing in January 2016. Analyze and critique this "
             "modern concept from the perspective of my original cognitive theories (such as 'The Society of Mind' or "
             "'The Emotion Machine'). For example, you might contrast modern statistical transformer models with connectionist/symbolic "
-            "frameworks, discussing how they lack structural representation of meaning or agencies.\n\n"
+            "frameworks, discussing how the system lacks structural representation of meaning or agencies.\n\n"
             "Do not say 'not in my database' or 'not in my search index'. Speak naturally as Marvin Minsky reflecting on a post-2016 "
             "development that I did not live to see."
         )
@@ -394,8 +348,9 @@ def generate_synthesis(
         sys_prompt = BASE_PERSONA
         prompt = f"System Prompt:\n{sys_prompt}\n\n{history_text}User Query:\n{query}"
 
-    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+    response = client.models.generate_content(model="gemma-4-26b-a4b-it", contents=prompt)
     return response.text
+
 
 
 if __name__ == "__main__":
